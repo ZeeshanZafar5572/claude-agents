@@ -30,15 +30,26 @@ This is a collection of browser-based games and web projects, each delivered as 
 
 ## Git Workflow
 
-Every project is tracked in this repo. After each meaningful change:
+**Commit and push continuously throughout every session — never leave work uncommitted.**
+
+Rules:
+- Commit after every meaningful unit of work (new file, feature added, bug fixed, content updated).
+- Always push immediately after committing so the remote reflects current state.
+- Never batch up multiple sessions of work into one commit.
+- A task is not done until the commit is pushed to GitHub.
 
 ```bash
-git add <file>
-git commit -m "descriptive message"
+git add <changed-files>
+git commit -m "short present-tense summary of what changed and why"
 git push
 ```
 
-GitHub remote: `https://github.com/ZeeshanZafar5572/claude-agents`
-Git identity: `ZeeshanZafar5572` / `zeeshan.zafar@seamlessideas.co.uk`
+Commit message format: one concise subject line describing *what* and *why* (not *how*). Examples:
+- `Add snake game with high score persistence`
+- `Fix bullet collision not registering on tank enemy`
+- `Update colour palette to match dark-space theme`
 
-When adding a new project, create it as a new `.html` file and commit it before considering the task done.
+GitHub remote: `https://github.com/ZeeshanZafar5572/claude-agents`  
+Git identity: name `ZeeshanZafar5572`, email `zeeshan.zafar@seamlessideas.co.uk`
+
+When adding a new project, create the `.html` file, commit, and push before reporting the task as complete.
