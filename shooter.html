@@ -198,19 +198,16 @@ class Player {
     this.enginePhase=0;
   }
   update(dt, bullets, particles, enemies){
-    // Up/down movement only, fixed on left side
-    let my=0;
-    if(input.keys['KeyW']||input.keys['ArrowUp'])   my=-1;
-    if(input.keys['KeyS']||input.keys['ArrowDown']) my= 1;
-    this.x=80;
+    // 4-direction movement
+    let mx=0, my=0;
+    if(input.keys['KeyW']||input.keys['ArrowUp'])    my=-1;
+    if(input.keys['KeyS']||input.keys['ArrowDown'])  my= 1;
+    if(input.keys['KeyA']||input.keys['ArrowLeft'])  mx=-1;
+    if(input.keys['KeyD']||input.keys['ArrowRight']) mx= 1;
+    if(mx!==0&&my!==0){mx*=0.707;my*=0.707;}
+    this.x=clamp(this.x+mx*PLAYER_CFG.speed*dt, this.radius, W-this.radius);
     this.y=clamp(this.y+my*PLAYER_CFG.speed*dt, this.radius, H-this.radius);
-    // Auto-aim at nearest enemy
-    let target=null, minD=Infinity;
-    for(const e of enemies){
-      const d=dist(this.x,this.y,e.x,e.y);
-      if(d<minD){ minD=d; target=e; }
-    }
-    this.angle=target ? angle(this.x,this.y,target.x,target.y) : 0;
+    this.angle=0; // always fire right
     this.enginePhase+=dt*6;
     // Auto-fire
     this.fireTimer-=dt;
@@ -559,7 +556,7 @@ function drawMenu(ctx){
 
   // Controls
   ctx.fillStyle='rgba(168,178,216,0.5)'; ctx.font='14px Segoe UI';
-  ctx.fillText('W / S  or  ↑ / ↓  —  Move Up & Down     Auto-fire enabled',W/2,H/2+90);
+  ctx.fillText('WASD / Arrows — Move     Auto-fire shoots right',W/2,H/2+90);
 
   if(game.highScore>0){
     ctx.fillStyle=C.amber; ctx.font='16px Segoe UI';
