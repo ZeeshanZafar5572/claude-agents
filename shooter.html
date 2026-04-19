@@ -21,7 +21,7 @@
       height: auto;
       border: 2px solid #0f3460;
       box-shadow: 0 0 40px rgba(83,216,251,0.15), 0 0 80px rgba(233,69,96,0.08);
-      cursor: crosshair;
+      cursor: default;
     }
   </style>
 </head>
@@ -60,11 +60,7 @@ const rand   = (a,b) => a + Math.random()*(b-a);
 const randInt= (a,b) => Math.floor(rand(a,b+1));
 function normalize(dx,dy){ const l=Math.hypot(dx,dy)||1; return {x:dx/l,y:dy/l}; }
 function spawnEdge(){
-  const side = randInt(0,3);
-  if(side===0) return {x:rand(0,W),  y:-30};
-  if(side===1) return {x:rand(0,W),  y:H+30};
-  if(side===2) return {x:-30,         y:rand(0,H)};
-               return {x:W+30,        y:rand(0,H)};
+  return {x: W+30, y: rand(30, H-30)};
 }
 function pickEnemyType(wave){
   const r = Math.random();
@@ -75,13 +71,14 @@ function pickEnemyType(wave){
 }
 
 // ─── Input ────────────────────────────────────────────────────────────────────
-const input = { keys:{}, mouseX:W/2, mouseY:H/2, mouseDown:false };
+const input = { keys:{}, mouseX:W/2, mouseY:H/2 };
 
-// ─── Stars (static background) ───────────────────────────────────────────────
+// ─── Stars (scrolling background) ────────────────────────────────────────────
 const stars = Array.from({length:90}, ()=>({
   x: rand(0,W), y: rand(0,H),
   r: rand(0.5,2.2),
   a: rand(0.2,0.9),
+  spd: rand(30,120),
 }));
 
 // ─── Audio ────────────────────────────────────────────────────────────────────
@@ -191,8 +188,7 @@ class Bullet {
 // ─── Player ───────────────────────────────────────────────────────────────────
 class Player {
   constructor(){
-    this.x=W/2; this.y=H/2;
-    this.vx=0; this.vy=0;
+    this.x=80; this.y=H/2;
     this.hp=PLAYER_CFG.maxHp; this.maxHp=PLAYER_CFG.maxHp;
     this.radius=PLAYER_CFG.radius;
     this.angle=0;
@@ -201,21 +197,24 @@ class Player {
     this.alive=true;
     this.enginePhase=0;
   }
-  update(dt, bullets, particles){
-    // Move
-    let mx=0,my=0;
-    if(input.keys['KeyW']||input.keys['ArrowUp'])    my=-1;
-    if(input.keys['KeyS']||input.keys['ArrowDown'])  my= 1;
-    if(input.keys['KeyA']||input.keys['ArrowLeft'])  mx=-1;
-    if(input.keys['KeyD']||input.keys['ArrowRight']) mx= 1;
-    if(mx!==0&&my!==0){mx*=0.707;my*=0.707;}
-    this.x=clamp(this.x+mx*PLAYER_CFG.speed*dt, this.radius, W-this.radius);
+  update(dt, bullets, particles, enemies){
+    // Up/down movement only, fixed on left side
+    let my=0;
+    if(input.keys['KeyW']||input.keys['ArrowUp'])   my=-1;
+    if(input.keys['KeyS']||input.keys['ArrowDown']) my= 1;
+    this.x=80;
     this.y=clamp(this.y+my*PLAYER_CFG.speed*dt, this.radius, H-this.radius);
-    this.angle=angle(this.x,this.y,input.mouseX,input.mouseY);
+    // Auto-aim at nearest enemy
+    let target=null, minD=Infinity;
+    for(const e of enemies){
+      const d=dist(this.x,this.y,e.x,e.y);
+      if(d<minD){ minD=d; target=e; }
+    }
+    this.angle=target ? angle(this.x,this.y,target.x,target.y) : 0;
     this.enginePhase+=dt*6;
-    // Shoot
+    // Auto-fire
     this.fireTimer-=dt;
-    if(input.mouseDown && this.fireTimer<=0){
+    if(this.fireTimer<=0){
       this.fireTimer=PLAYER_CFG.fireRate;
       const bx=this.x+Math.cos(this.angle)*22, by=this.y+Math.sin(this.angle)*22;
       bullets.push(new Bullet(bx,by,this.angle));
@@ -466,14 +465,20 @@ function resolveCollisions(){
 }
 
 // ─── Background ───────────────────────────────────────────────────────────────
-function drawBackground(ctx){
+function drawBackground(ctx, dt){
   ctx.fillStyle=C.bg;
   ctx.fillRect(0,0,W,H);
-  // Grid
+  // Grid (scrolling)
   ctx.strokeStyle='rgba(15,52,96,0.3)'; ctx.lineWidth=1;
   for(let x=0;x<W;x+=50){ ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,H);ctx.stroke(); }
   for(let y=0;y<H;y+=50){ ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(W,y);ctx.stroke(); }
-  // Stars
+  // Stars — scroll leftward
+  if(dt){
+    for(const s of stars){
+      s.x-=s.spd*dt;
+      if(s.x<0){ s.x=W; s.y=rand(0,H); }
+    }
+  }
   for(const s of stars){
     ctx.globalAlpha=s.a*(0.7+0.3*Math.sin(Date.now()/2000+s.x));
     ctx.fillStyle=C.white;
@@ -554,7 +559,7 @@ function drawMenu(ctx){
 
   // Controls
   ctx.fillStyle='rgba(168,178,216,0.5)'; ctx.font='14px Segoe UI';
-  ctx.fillText('WASD / Arrows — Move     Mouse — Aim     Click / Hold — Fire',W/2,H/2+90);
+  ctx.fillText('W / S  or  ↑ / ↓  —  Move Up & Down     Auto-fire enabled',W/2,H/2+90);
 
   if(game.highScore>0){
     ctx.fillStyle=C.amber; ctx.font='16px Segoe UI';
@@ -629,7 +634,7 @@ function loop(timestamp){
     ctx.translate(rand(-i,i),rand(-i,i));
   }
 
-  drawBackground(ctx);
+  drawBackground(ctx, dt);
 
   // Spawn enemies
   if(game.state==='playing'){
@@ -654,7 +659,7 @@ function loop(timestamp){
   }
 
   // Update
-  game.player.update(dt, game.bullets, game.particles);
+  game.player.update(dt, game.bullets, game.particles, game.enemies);
   for(const e of game.enemies) e.update(dt,game.player,game.particles);
   for(const b of game.bullets) b.update(dt);
   updateParticles(dt,game.particles);
@@ -685,7 +690,11 @@ function loop(timestamp){
 }
 
 // ─── Bootstrap ────────────────────────────────────────────────────────────────
-document.addEventListener('keydown',e=>{ input.keys[e.code]=true; e.preventDefault(); });
+document.addEventListener('keydown',e=>{
+  input.keys[e.code]=true;
+  if((e.code==='Enter'||e.code==='Space')&&game.state==='menu') game.start();
+  e.preventDefault();
+});
 document.addEventListener('keyup',  e=>{ input.keys[e.code]=false; });
 canvas.addEventListener('mousemove',e=>{
   const r=canvas.getBoundingClientRect();
@@ -694,14 +703,12 @@ canvas.addEventListener('mousemove',e=>{
   input.mouseY=(e.clientY-r.top)*scaleY;
 });
 canvas.addEventListener('mousedown',e=>{
-  input.mouseDown=true;
   if(game.state==='menu') game.start();
   if(game.state==='game_over'){
     const mx=input.mouseX,my=input.mouseY;
     if(mx>=retryBtn.x&&mx<=retryBtn.x+retryBtn.w&&my>=retryBtn.y&&my<=retryBtn.y+retryBtn.h) game.start();
   }
 });
-canvas.addEventListener('mouseup',()=>{ input.mouseDown=false; });
 canvas.addEventListener('contextmenu',e=>e.preventDefault());
 
 requestAnimationFrame(loop);
