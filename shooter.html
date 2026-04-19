@@ -48,6 +48,13 @@ const ENEMY_CFG = {
   soldier: { hp: 60,  speed: 85,  radius: 18, damage: 20, score: 25,  color: C.pink   },
   tank:    { hp: 150, speed: 45,  radius: 28, damage: 40, score: 75,  color: C.purple },
 };
+const POWERUP_CFG = {
+  spread: { color: C.green,   label: 'SPREAD', duration: 10 },
+  rapid:  { color: C.amber,   label: 'RAPID',  duration: 10 },
+  laser:  { color: '#dd00ff', label: 'LASER',  duration: 10 },
+  rocket: { color: C.pink,    label: 'ROCKET', duration: 10 },
+  shield: { color: C.cyan,    label: '+30 HP', duration: 0  },
+};
 const WAVE_BASE = 5, WAVE_INC = 3;
 const SPAWN_INTERVAL_BASE = 1.8, SPAWN_INTERVAL_MIN = 0.5, SPAWN_INTERVAL_DEC = 0.15;
 const WAVE_BREAK_DUR = 3;
@@ -101,6 +108,16 @@ function playHit(){
   g.gain.setValueAtTime(0.15,ctx.currentTime); g.gain.exponentialRampToValueAtTime(0.001,ctx.currentTime+0.1);
   o.connect(g); g.connect(ctx.destination); o.start(); o.stop(ctx.currentTime+0.11);
 }
+function playPowerUp(){
+  const ctx=getAudioCtx(); if(!ctx) return;
+  const o=ctx.createOscillator(), g=ctx.createGain();
+  o.type='sine';
+  o.frequency.setValueAtTime(400,ctx.currentTime);
+  o.frequency.linearRampToValueAtTime(800,ctx.currentTime+0.15);
+  o.frequency.linearRampToValueAtTime(600,ctx.currentTime+0.3);
+  g.gain.setValueAtTime(0.2,ctx.currentTime); g.gain.exponentialRampToValueAtTime(0.001,ctx.currentTime+0.35);
+  o.connect(g); g.connect(ctx.destination); o.start(); o.stop(ctx.currentTime+0.35);
+}
 function playExplosion(){
   const ctx = getAudioCtx(); if(!ctx) return;
   const buf = ctx.createBuffer(1,ctx.sampleRate*0.4,ctx.sampleRate);
@@ -152,13 +169,15 @@ function drawParticles(ctx,particles){
 
 // ─── Bullet ───────────────────────────────────────────────────────────────────
 class Bullet {
-  constructor(x,y,ang){
+  constructor(x,y,ang,opts={}){
     this.x=x; this.y=y;
     this.dx=Math.cos(ang); this.dy=Math.sin(ang);
-    this.speed=PLAYER_CFG.bulletSpeed;
-    this.damage=PLAYER_CFG.bulletDamage;
-    this.radius=4;
-    this.age=0; this.maxAge=1.4;
+    this.speed=opts.speed||PLAYER_CFG.bulletSpeed;
+    this.damage=opts.damage||PLAYER_CFG.bulletDamage;
+    this.radius=opts.radius||4;
+    this.type=opts.type||'normal';
+    this.hitEnemies=new Set();
+    this.age=0; this.maxAge=opts.maxAge||1.6;
     this.alive=true;
   }
   update(dt){
@@ -171,16 +190,29 @@ class Bullet {
     ctx.save();
     ctx.translate(this.x,this.y);
     ctx.rotate(Math.atan2(this.dy,this.dx));
-    ctx.shadowBlur=18; ctx.shadowColor=C.cyan;
-    ctx.fillStyle=C.white;
-    ctx.beginPath();
-    ctx.ellipse(0,0,3,8,0,0,Math.PI*2);
-    ctx.fill();
-    ctx.shadowBlur=0;
-    ctx.fillStyle=C.cyan;
-    ctx.beginPath();
-    ctx.ellipse(0,0,1.5,5,0,0,Math.PI*2);
-    ctx.fill();
+    if(this.type==='rocket'){
+      ctx.shadowBlur=22; ctx.shadowColor=C.amber;
+      ctx.fillStyle=C.amber;
+      ctx.beginPath(); ctx.ellipse(0,0,5,11,0,0,Math.PI*2); ctx.fill();
+      ctx.shadowBlur=0;
+      ctx.fillStyle=C.pink;
+      ctx.beginPath(); ctx.ellipse(0,3,2.5,5,0,0,Math.PI*2); ctx.fill();
+    } else if(this.type==='laser'){
+      ctx.shadowBlur=28; ctx.shadowColor='#dd00ff';
+      ctx.fillStyle='#dd00ff';
+      ctx.beginPath(); ctx.ellipse(0,0,4,16,0,0,Math.PI*2); ctx.fill();
+      ctx.shadowBlur=0;
+      ctx.fillStyle=C.white;
+      ctx.beginPath(); ctx.ellipse(0,0,1.5,10,0,0,Math.PI*2); ctx.fill();
+    } else {
+      const col=this.type==='spread'?C.green:this.type==='rapid'?C.amber:C.cyan;
+      ctx.shadowBlur=18; ctx.shadowColor=col;
+      ctx.fillStyle=C.white;
+      ctx.beginPath(); ctx.ellipse(0,0,3,8,0,0,Math.PI*2); ctx.fill();
+      ctx.shadowBlur=0;
+      ctx.fillStyle=col;
+      ctx.beginPath(); ctx.ellipse(0,0,1.5,5,0,0,Math.PI*2); ctx.fill();
+    }
     ctx.restore();
   }
 }
@@ -196,6 +228,8 @@ class Player {
     this.invTimer=0;
     this.alive=true;
     this.enginePhase=0;
+    this.weapon='normal';
+    this.weaponTimer=0;
   }
   update(dt, bullets, particles, enemies){
     // 4-direction movement
@@ -209,15 +243,35 @@ class Player {
     this.y=clamp(this.y+my*PLAYER_CFG.speed*dt, this.radius, H-this.radius);
     this.angle=0; // always fire right
     this.enginePhase+=dt*6;
-    // Auto-fire
+    // Auto-fire (rate varies by weapon)
+    const fr=this.weapon==='rapid'?PLAYER_CFG.fireRate*0.4:
+              this.weapon==='rocket'?PLAYER_CFG.fireRate*3:PLAYER_CFG.fireRate;
     this.fireTimer-=dt;
     if(this.fireTimer<=0){
-      this.fireTimer=PLAYER_CFG.fireRate;
-      const bx=this.x+Math.cos(this.angle)*22, by=this.y+Math.sin(this.angle)*22;
-      bullets.push(new Bullet(bx,by,this.angle));
-      spawnMuzzle(bx,by,this.angle,particles);
+      this.fireTimer=fr;
+      const bx=this.x+22, by=this.y;
+      if(this.weapon==='spread'){
+        for(const da of [-0.22,0,0.22]){
+          bullets.push(new Bullet(bx,by,da,{type:'spread',damage:20}));
+          spawnMuzzle(bx,by,da,particles);
+        }
+      } else if(this.weapon==='rapid'){
+        bullets.push(new Bullet(bx,by,0,{type:'rapid',damage:18,speed:680}));
+        spawnMuzzle(bx,by,0,particles);
+      } else if(this.weapon==='laser'){
+        bullets.push(new Bullet(bx,by,0,{type:'laser',damage:55,speed:750,radius:6,maxAge:1.1}));
+        spawnMuzzle(bx,by,0,particles);
+      } else if(this.weapon==='rocket'){
+        bullets.push(new Bullet(bx,by,0,{type:'rocket',damage:85,speed:260,radius:8,maxAge:2.5}));
+        spawnMuzzle(bx,by,0,particles);
+      } else {
+        bullets.push(new Bullet(bx,by,0));
+        spawnMuzzle(bx,by,0,particles);
+      }
       playShot();
     }
+    // Weapon timer countdown
+    if(this.weapon!=='normal'){ this.weaponTimer-=dt; if(this.weaponTimer<=0) this.weapon='normal'; }
     if(this.invTimer>0) this.invTimer-=dt;
     if(this.hp<=0) this.alive=false;
   }
@@ -389,6 +443,36 @@ class Enemy {
   }
 }
 
+// ─── Power-Up ─────────────────────────────────────────────────────────────────
+const PU_TYPES = ['spread','rapid','laser','rocket','shield'];
+class PowerUp {
+  constructor(x,y,type){
+    this.x=x; this.y=y; this.type=type;
+    this.radius=16; this.alive=true;
+    this.age=0; this.maxAge=7;
+    this.bobPhase=rand(0,Math.PI*2);
+  }
+  update(dt){ this.age+=dt; if(this.age>this.maxAge) this.alive=false; }
+  draw(ctx){
+    const cfg=POWERUP_CFG[this.type];
+    const bob=Math.sin(Date.now()/350+this.bobPhase)*4;
+    const pulse=0.7+0.3*Math.sin(Date.now()/300+this.bobPhase);
+    const fade=this.age/this.maxAge>0.7?clamp(1-(this.age/this.maxAge-0.7)/0.3,0.3,1):1;
+    ctx.save();
+    ctx.globalAlpha=fade;
+    ctx.translate(this.x,this.y+bob);
+    ctx.shadowBlur=20*pulse; ctx.shadowColor=cfg.color;
+    ctx.strokeStyle=cfg.color; ctx.lineWidth=2;
+    ctx.beginPath(); ctx.arc(0,0,this.radius,0,Math.PI*2); ctx.stroke();
+    ctx.fillStyle=cfg.color+'44';
+    ctx.beginPath(); ctx.arc(0,0,this.radius,0,Math.PI*2); ctx.fill();
+    ctx.shadowBlur=0;
+    ctx.fillStyle=cfg.color; ctx.font='bold 9px Segoe UI'; ctx.textAlign='center';
+    ctx.fillText(cfg.label,0,4);
+    ctx.restore();
+  }
+}
+
 // ─── Game State ───────────────────────────────────────────────────────────────
 const game = {
   state:'menu',
@@ -396,6 +480,7 @@ const game = {
   enemies:[],
   bullets:[],
   particles:[],
+  powerUps:[],
   score:0,
   highScore:parseInt(localStorage.getItem('voidstrike_hs')||'0'),
   wave:0,
@@ -409,7 +494,7 @@ const game = {
 
   start(){
     this.player=new Player();
-    this.enemies=[]; this.bullets=[]; this.particles=[];
+    this.enemies=[]; this.bullets=[]; this.particles=[]; this.powerUps=[];
     this.score=0; this.wave=0; this.state='playing';
     this.nextWave();
   },
@@ -433,18 +518,60 @@ const game = {
 };
 
 // ─── Collision ────────────────────────────────────────────────────────────────
+function tryDropPowerUp(enemy){
+  if(Math.random()<0.28)
+    game.powerUps.push(new PowerUp(enemy.x,enemy.y,PU_TYPES[randInt(0,PU_TYPES.length-1)]));
+}
 function resolveCollisions(){
   for(const b of game.bullets){
     if(!b.alive) continue;
     for(const e of game.enemies){
       if(!e.alive) continue;
       if(dist(b.x,b.y,e.x,e.y)<b.radius+e.radius){
-        e.takeDamage(b.damage,game.particles);
-        spawnHitSpark(b.x,b.y,C.cyan,game.particles);
-        b.alive=false;
-        if(!e.alive) game.score+=e.score;
-        break;
+        if(b.type==='laser'){
+          if(!b.hitEnemies.has(e)){
+            b.hitEnemies.add(e);
+            e.takeDamage(b.damage,game.particles);
+            spawnHitSpark(b.x,b.y,'#dd00ff',game.particles);
+            if(!e.alive){ game.score+=e.score; tryDropPowerUp(e); }
+          }
+        } else if(b.type==='rocket'){
+          b.alive=false;
+          spawnExplosion(b.x,b.y,C.amber,game.particles,22);
+          game.triggerShake(12,0.35);
+          playExplosion();
+          for(const t of game.enemies){
+            if(!t.alive) continue;
+            const d=dist(b.x,b.y,t.x,t.y);
+            if(d<90){
+              t.takeDamage(b.damage*clamp(1-d/90,0,1),game.particles);
+              if(!t.alive){ game.score+=t.score; tryDropPowerUp(t); }
+            }
+          }
+          break;
+        } else {
+          e.takeDamage(b.damage,game.particles);
+          spawnHitSpark(b.x,b.y,C.cyan,game.particles);
+          b.alive=false;
+          if(!e.alive){ game.score+=e.score; tryDropPowerUp(e); }
+          break;
+        }
       }
+    }
+  }
+  // Power-up pickup
+  for(const pu of game.powerUps){
+    if(!pu.alive) continue;
+    if(dist(pu.x,pu.y,game.player.x,game.player.y)<pu.radius+game.player.radius){
+      pu.alive=false;
+      if(pu.type==='shield'){
+        game.player.hp=Math.min(game.player.maxHp,game.player.hp+30);
+      } else {
+        game.player.weapon=pu.type;
+        game.player.weaponTimer=POWERUP_CFG[pu.type].duration;
+      }
+      playPowerUp();
+      spawnExplosion(pu.x,pu.y,POWERUP_CFG[pu.type].color,game.particles,8);
     }
   }
   // Separation between enemies
@@ -505,6 +632,20 @@ function drawHUD(ctx){
   const enemiesLeft=Math.max(0,game.enemies.length+(game.totalEnemies-game.spawned));
   ctx.fillStyle='rgba(245,166,35,0.6)'; ctx.font='12px Segoe UI';
   ctx.fillText('ENEMIES '+enemiesLeft,W-12,68);
+  // Active weapon indicator
+  if(p.weapon!=='normal'){
+    const wcfg=POWERUP_CFG[p.weapon];
+    const wRatio=clamp(p.weaponTimer/wcfg.duration,0,1);
+    ctx.textAlign='center';
+    ctx.font='bold 13px Segoe UI'; ctx.shadowBlur=10; ctx.shadowColor=wcfg.color;
+    ctx.fillStyle=wcfg.color;
+    ctx.fillText('⚡ '+wcfg.label,W/2,H-58);
+    ctx.shadowBlur=0;
+    const tw=140,th=5,tx=W/2-70,ty=H-50;
+    ctx.fillStyle='rgba(0,0,0,0.5)'; ctx.fillRect(tx,ty,tw,th);
+    ctx.fillStyle=wcfg.color; ctx.fillRect(tx,ty,tw*wRatio,th);
+    ctx.textAlign='left';
+  }
   // HP bar at bottom
   const barW=300, barH=18, barX=W/2-barW/2, barY=H-36;
   ctx.fillStyle='rgba(0,0,0,0.6)'; ctx.fillRect(barX-2,barY-2,barW+4,barH+4);
@@ -665,13 +806,18 @@ function loop(timestamp){
   // Player shake on damage
   if(game.player.invTimer>0.45) game.triggerShake(8,0.3);
 
+  // Update powerups
+  for(const pu of game.powerUps) pu.update(dt);
+
   // Cleanup
   game.enemies  =game.enemies.filter(e=>e.alive);
   game.bullets  =game.bullets.filter(b=>b.alive);
   game.particles=game.particles.filter(p=>p.alive);
+  game.powerUps =game.powerUps.filter(pu=>pu.alive);
 
   // Draw (back to front)
   drawParticles(ctx,game.particles.filter(p=>p.r<3));
+  for(const pu of game.powerUps) pu.draw(ctx);
   for(const b of game.bullets) b.draw(ctx);
   for(const e of game.enemies) e.draw(ctx);
   game.player.draw(ctx);
